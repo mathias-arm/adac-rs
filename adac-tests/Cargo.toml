@@ -1,0 +1,24 @@
+[package]
+name = "adac-tests"
+version = "0.1.0"
+edition = "2021"
+license = "BSD-3-Clause"
+
+[dependencies]
+adac = { path = "../adac" }
+adac-crypto = { path = "../adac-crypto" }
+adac-crypto-aws_lc = { path = "../adac-crypto-aws_lc" }
+adac-crypto-pkcs11 = { path = "../adac-crypto-pkcs11" }
+adac-crypto-rust = { path = "../adac-crypto-rust" }
+adac-cryptoki = { path = "../adac-cryptoki" }
+base16ct = "0.2.0"
+base64 = "0.22"
+clap = { version = "4", features = ["color", "env", "derive"] }
+console = { version = "0.16", default-features = false, features = ["ansi-parsing", "std"] }
+cryptoki = "0.10.0"
+cryptoki-sys = "=0.4.0"
+hex = "0.4.3"
+hex-literal = "1.1"
+indicatif = "0.18.0"
+pem = "3.0"
+rand = "0.9"

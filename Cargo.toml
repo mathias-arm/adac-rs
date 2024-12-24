@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = [
+    "adac",
+    "adac-cli",
+    "adac-crypto",
+    "adac-crypto-aws_lc",
+    "adac-crypto-pkcs11",
+    "adac-crypto-rust",
+    "adac-cryptoki",
+    "adac-tests",
+]

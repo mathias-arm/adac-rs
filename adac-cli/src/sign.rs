@@ -1,0 +1,188 @@
+// Copyright (c) 2019-2025, Arm Limited. All rights reserved.
+// SPDX-License-Identifier: BSD-3-Clause
+
+use crate::{CommandError, CommandOutput, config};
+use adac::CertificateHeader;
+use adac::certificate::AdacCertificate;
+use adac::traits::{AdacCryptoProvider, AdacKeyFormat};
+use adac_crypto::utils::{load_certificates, load_key, load_public_key, save_certificates};
+use adac_crypto_pkcs11::Pkcs11Provider;
+use serde::Serialize;
+use std::fs;
+use std::io::Write;
+use std::ops::DerefMut;
+use std::path::PathBuf;
+
+#[derive(Debug, Serialize)]
+pub struct SignatureReport {
+    pub certificate: String,
+    pub path: Option<PathBuf>,
+}
+
+impl SignatureReport {
+    pub fn text_output(&self, out: &mut dyn Write) -> anyhow::Result<()> {
+        if self.path.is_none() {
+            writeln!(out, "{}", self.certificate)?;
+        }
+        Ok(())
+    }
+}
+
+pub fn sign_command(
+    config: &PathBuf,
+    issuer: &Option<PathBuf>,
+    output: &Option<PathBuf>,
+    private: &Option<PathBuf>,
+    module: &Option<String>,
+    label: &Option<String>,
+    pin: &Option<String>,
+    pin_file: &Option<String>,
+    pin_env: &Option<String>,
+    key_id: &Option<String>,
+    request: &PathBuf,
+    section: &Option<String>,
+) -> anyhow::Result<CommandOutput, CommandError> {
+    let config = fs::read_to_string(config).map_err(|e| CommandError::FileRead {
+        path: config.clone(),
+        source: e,
+    })?;
+    let config = config::parse_adac_configuration(&config, (*section).clone()).map_err(|e| {
+        CommandError::AdacError {
+            source: anyhow::anyhow!("Error parsing configuration file: {:?}", e),
+        }
+    })?;
+    let public_key = load_public_key(request).map_err(|e| CommandError::AdacError {
+        source: anyhow::anyhow!("Error loading public key: {:?}", e),
+    })?;
+
+    let mut crypto: Box<dyn AdacCryptoProvider> = if let Some(key_id) = key_id {
+        let key_id =
+            base16ct::lower::decode_vec(key_id).map_err(|_| CommandError::InvalidParameter {
+                parameter: "--key-id".to_string(),
+            })?;
+        let kt = public_key.get_key_type();
+
+        let module = if let Some(m) = module {
+            m.clone()
+        } else if let Ok(m) = std::env::var("PKCS11_MODULE") {
+            m
+        } else {
+            return Err(CommandError::AdacError {
+                source: anyhow::anyhow!("Parameter --module is required."),
+            });
+        };
+
+        let label = if let Some(l) = label {
+            Some(l.clone())
+        } else {
+            std::env::var("PKCS11_SLOT").ok()
+        };
+
+        let pin = if let Some(p) = pin {
+            p.clone()
+        } else if let Some(p) = pin_file {
+            fs::read_to_string(p).map_err(|e| CommandError::FileRead {
+                path: p.clone().into(),
+                source: e,
+            })?
+        } else if let Some(env) = pin_env {
+            std::env::var(env).map_err(|_| CommandError::AdacError {
+                source: anyhow::anyhow!("Environment variable {} not set", env),
+            })?
+        } else if let Ok(p) = std::env::var("PKCS11_PIN") {
+            p
+        } else {
+            return Err(CommandError::AdacError {
+                source: anyhow::anyhow!("Parameter --pin or --pin-env or --pin-file is required."),
+            });
+        };
+
+        let mut crypto = Pkcs11Provider::new(module, pin, label);
+        crypto
+            .load_key(kt, AdacKeyFormat::KeyId, key_id.as_slice())
+            .map_err(|e| CommandError::AdacError {
+                source: anyhow::anyhow!("Error loading PKCS#11 key: {:?}", e),
+            })?;
+        Box::new(crypto)
+    } else {
+        let mut crypto = adac_crypto_rust::RustCryptoProvider::default();
+        let private = private.clone();
+        let private = if let Some(p) = private {
+            p.clone()
+        } else {
+            return Err(CommandError::AdacError {
+                source: anyhow::anyhow!("Parameter --private or --key-id required."),
+            });
+        };
+
+        let (kt, private_key) = load_key(private).map_err(|e| CommandError::AdacError {
+            source: anyhow::anyhow!("Error loading key file: {:?}", e),
+        })?;
+        crypto
+            .load_key(kt, AdacKeyFormat::Pkcs8, private_key.clone().as_slice())
+            .map_err(|e| CommandError::AdacError {
+                source: anyhow::anyhow!("Error parsing PKCS#8 key: {:?}", e),
+            })?;
+        if public_key.get_key_type() != kt {
+            return Err(CommandError::AdacError {
+                source: anyhow::anyhow!("Key types in private/public key do not match."),
+            });
+        }
+        Box::new(crypto)
+    };
+
+    let kt = public_key.get_key_type();
+    let h = CertificateHeader {
+        format_version: config.format_version,
+        key_type: kt,
+        signature_type: kt,
+        role: config.role,
+        usage: config.usage,
+        lifecycle: config.lifecycle,
+        oem_constraint: config.oem_constraint,
+        soc_class: config.soc_class,
+        soc_id: config.soc_id,
+        permissions_mask: config.permissions_mask,
+        ..Default::default()
+    };
+
+    let extensions = if !config.extensions.is_empty() {
+        Some(config.extensions.as_slice())
+    } else {
+        None
+    };
+
+    let certificate =
+        AdacCertificate::sign(kt, h, public_key.get_adac(), extensions, crypto.deref_mut())
+            .map_err(|e| CommandError::AdacError {
+                source: anyhow::anyhow!("Error signing certificate: {:?}", e),
+            })?;
+
+    let chain = if let Some(path) = issuer {
+        let mut c = load_certificates(path).map_err(|e| CommandError::AdacError {
+            source: anyhow::anyhow!("Error loading certificate chain: {:?}", e),
+        })?;
+        c.push(certificate);
+        c
+    } else {
+        vec![certificate]
+    };
+
+    let certificate = save_certificates(&chain).map_err(|e| CommandError::AdacError {
+        source: anyhow::anyhow!("Error serializing certificates: {:?}", e),
+    })?;
+
+    if let Some(path) = output {
+        let mut file = fs::File::create(path).map_err(|e| CommandError::FileWrite {
+            path: path.clone(),
+            source: e,
+        })?;
+        file.write_all(certificate.as_bytes())
+            .map_err(|e| CommandError::FileWrite {
+                path: path.clone(),
+                source: e,
+            })?;
+    }
+    let path = output.clone();
+    Ok(CommandOutput::Sign(SignatureReport { certificate, path }))
+}

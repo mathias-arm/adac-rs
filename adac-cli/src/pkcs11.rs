@@ -1,0 +1,111 @@
+// Copyright (c) 2019-2025, Arm Limited. All rights reserved.
+// SPDX-License-Identifier: BSD-3-Clause
+
+use crate::{CommandError, CommandOutput};
+use adac::KeyOptions::{
+    EcdsaP256Sha256, EcdsaP384Sha384, EcdsaP521Sha512, Rsa3072Sha256, Rsa4096Sha256,
+};
+use adac_crypto_pkcs11::Pkcs11Provider;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use serde::Serialize;
+use std::io::Write;
+
+#[derive(Debug, Serialize)]
+pub struct Pkcs11GenerateReport {
+    kid: String,
+    public_key: String,
+    pem: String,
+}
+
+impl Pkcs11GenerateReport {
+    pub fn text_output(&self, out: &mut dyn Write) -> anyhow::Result<()> {
+        writeln!(out, "Key '{}' generated", self.kid)?;
+        writeln!(out, "Public-key = {}", self.public_key)?;
+        writeln!(out)?;
+        writeln!(out, "{}", self.pem)?;
+        Ok(())
+    }
+}
+
+pub fn pkcs11_generate_command(
+    key_type: &String,
+    module: &Option<String>,
+    label: &Option<String>,
+    pin: &Option<String>,
+    pin_file: &Option<String>,
+    pin_env: &Option<String>,
+) -> anyhow::Result<CommandOutput, CommandError> {
+    let key_type = match key_type.as_str() {
+        "EcdsaP256Sha256" => EcdsaP256Sha256,
+        "EcdsaP384Sha384" => EcdsaP384Sha384,
+        "EcdsaP521Sha512" => EcdsaP521Sha512,
+        "Rsa3072Sha256" => Rsa3072Sha256,
+        "Rsa4096Sha256" => Rsa4096Sha256,
+        "Ed25519Sha512" | "Ed448Shake256" | "SmSm2Sm3" | "CmacAes" | "HmacSha256"
+        | "MlDsa44Sha256" | "MlDsa65Sha384" | "MlDsa87Sha512" => {
+            return Err(CommandError::AdacError {
+                source: anyhow::anyhow!("Algorithm '{}' not supported", key_type),
+            });
+        }
+        _ => {
+            return Err(CommandError::AdacError {
+                source: anyhow::anyhow!("Algorithm '{}' not recognized", key_type),
+            });
+        }
+    };
+
+    let module = if let Some(m) = module {
+        m.clone()
+    } else if let Ok(m) = std::env::var("PKCS11_MODULE") {
+        m
+    } else {
+        return Err(CommandError::AdacError {
+            source: anyhow::anyhow!("Parameter --module is required."),
+        });
+    };
+
+    let label = if let Some(l) = label {
+        Some(l.clone())
+    } else {
+        std::env::var("PKCS11_SLOT").ok()
+    };
+
+    let pin = if let Some(p) = pin {
+        p.clone()
+    } else if let Some(p) = pin_file {
+        std::fs::read_to_string(p).map_err(|e| CommandError::FileRead {
+            path: p.clone().into(),
+            source: e,
+        })?
+    } else if let Some(env) = pin_env {
+        std::env::var(env).map_err(|_| CommandError::AdacError {
+            source: anyhow::anyhow!("Environment variable {} not set", env),
+        })?
+    } else if let Ok(p) = std::env::var("PKCS11_PIN") {
+        p
+    } else {
+        return Err(CommandError::AdacError {
+            source: anyhow::anyhow!("Parameter --pin or --pin-env or --pin-file is required."),
+        });
+    };
+
+    let mut crypto = Pkcs11Provider::new(module, pin, label);
+    let (kid, _, spki, _, _) =
+        crypto
+            .generate_key(key_type)
+            .map_err(|e| CommandError::AdacError {
+                source: anyhow::anyhow!("Error generating PKCS#11 key: {:?}", e),
+            })?;
+
+    let public_key = BASE64_STANDARD.encode(&spki);
+    let pem_config = pem::EncodeConfig::new().set_line_ending(pem::LineEnding::LF);
+    let pem = pem::Pem::new("PUBLIC KEY", spki.as_slice());
+    let pem = pem::encode_config(&pem, pem_config);
+
+    Ok(CommandOutput::Pkcs11Generate(Pkcs11GenerateReport {
+        kid,
+        public_key,
+        pem,
+    }))
+}

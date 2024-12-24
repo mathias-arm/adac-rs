@@ -1,0 +1,10 @@
+[package]
+name = "adac-crypto-aws_lc"
+version = "0.1.0"
+edition = "2024"
+license = "BSD-3-Clause"
+
+[dependencies]
+adac = { path = "../adac" }
+adac-crypto = { path = "../adac-crypto" }
+aws-lc-rs = { version = "1.13", features = ["unstable"] }
