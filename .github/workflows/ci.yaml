@@ -1,0 +1,70 @@
+name: Continuous Integration
+
+on: [push, pull_request, workflow_dispatch]
+
+jobs:
+  ci:
+    name: Check formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check formatting
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy
+
+  tests-softhsm:
+    name: Run tests against SoftHSM
+    continue-on-error: true
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+          - aarch64-apple-darwin
+        toolchain:
+          - stable
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            runner: macos-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          default: true
+      - name: Install SoftHSM
+        run: |
+          if [ "${{ matrix.target }}" = "aarch64-apple-darwin" ]; then
+            brew install softhsm2 openssl opensc softhsm2
+          else
+            sudo apt-get update -y -qq
+            sudo apt-get install -y -qq libsofthsm2 opensc
+          fi
+          mkdir /tmp/tokens
+          echo "directories.tokendir = /tmp/tokens" > /tmp/softhsm2.conf
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
+      - name: Check
+        run: cargo check --target ${{ matrix.target }} --workspace --all-targets
+      - name: Test script
+        env:
+          TEST_PKCS11_MODULE: /usr/lib/softhsm/libsofthsm2.so
+          SOFTHSM2_CONF: /tmp/softhsm2.conf
+          RUSTFLAGS: "-D warnings"
+          RUST_BACKTRACE: 1
+        run: cargo test --target ${{ matrix.target }} --workspace
+
+  build-windows:
+    name: Build on Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo check --all-features --workspace --all-targets
