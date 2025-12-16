@@ -2,7 +2,18 @@
 
 set -e
 
-PKCS11_MODULE="${PKCS11_MODULE:-/opt/homebrew/lib/softhsm/libsofthsm2.so}"
+if [ -z "${PKCS11_MODULE:-}" ] ; then
+  OS=$(uname -s)
+  ARCH=$(uname -m)
+
+  case "${OS}:${ARCH}" in
+    Darwin:arm64) PKCS11_MODULE=/opt/homebrew/lib/softhsm/libsofthsm2.so ;;
+    Linux:aarch64) PKCS11_MODULE=/usr/lib/aarch64-linux-gnu/softhsm/libsofthsm2.so ;;
+    Linux:x86_64) PKCS11_MODULE=/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so ;;
+    *) echo "Unsupported platform for default PKCS11_MODULE: ${OS} ${ARCH}" >&2 ; exit 1 ;;
+  esac
+fi
+
 PKCS11_SLOT=test-token
 PKCS11_PIN=1234
 PKCS11_SOPIN=4321
