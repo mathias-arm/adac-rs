@@ -58,7 +58,7 @@ pub fn adac_check(module: String, pin: String, label: Option<String>) {
                 CK_MECHANISM_TYPE::from(MechanismType::EDDSA),
                 vec![("Ed25519Sha512", 256), ("Ed448Shake256", 448)],
             ),
-            ("ML-DSA", CK_MECHANISM_TYPE::from(0x0000001Du64), vec![]),
+            ("ML-DSA", CK_MECHANISM_TYPE::from(0x001Du32), vec![]),
         ];
         let mut first = true;
         for c in checks {
