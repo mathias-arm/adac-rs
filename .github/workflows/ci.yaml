@@ -48,19 +48,15 @@ jobs:
             sudo apt-get update -y -qq
             sudo apt-get install -y -qq libsofthsm2 opensc
           fi
-          mkdir /tmp/tokens
-          echo "directories.tokendir = /tmp/tokens" > /tmp/softhsm2.conf
       - name: Install Rust target
         run: rustup target add ${{ matrix.target }}
       - name: Check
         run: cargo check --target ${{ matrix.target }} --workspace --all-targets
       - name: Test script
         env:
-          TEST_PKCS11_MODULE: /usr/lib/softhsm/libsofthsm2.so
-          SOFTHSM2_CONF: /tmp/softhsm2.conf
           RUSTFLAGS: "-D warnings"
           RUST_BACKTRACE: 1
-        run: cargo test --target ${{ matrix.target }} --workspace
+        run: sh adac-tests/run-tests.sh
 
   build-windows:
     name: Build on Windows
