@@ -3,6 +3,8 @@
 
 use crate::{CommandError, CommandOutput};
 use adac_crypto::utils::{load_certificates, save_certificates};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use serde::Serialize;
 use std::io::Write;
 use std::path::PathBuf;
@@ -46,6 +48,10 @@ impl DisplayReport {
             )?;
 
             writeln!(out, "Public key: {}", crt.public_key)?;
+            if self.verbose > 0 {
+                writeln!(out, "Public key (PEM):")?;
+                write!(out, "{}", crt.pem)?;
+            }
 
             if let Some(ext) = &crt.extensions {
                 writeln!(out, "Extensions ({} bytes)", ext.bytes)?;
@@ -54,6 +60,12 @@ impl DisplayReport {
             }
             if self.verbose > 0 {
                 writeln!(out, "Signature: {}", crt.signature)?;
+            }
+            if self.verbose > 1 && let Some(der_sig) = &crt.der_sig {
+                writeln!(out, "Signature (DER): {}", der_sig)?;
+            }
+            if self.verbose > 2 {
+                writeln!(out, "TBS: {}", crt.tbs)?;
             }
         }
 
@@ -81,8 +93,11 @@ pub struct DisplayCertificate {
     permissions_mask_be: String,
     permissions_mask_raw: String,
     public_key: String,
+    pem: String,
     extensions: Option<DisplayExtension>,
     signature: String,
+    der_sig: Option<String>,
+    tbs: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -157,7 +172,25 @@ pub fn display_command(
             None
         };
 
+        let p = adac_crypto::public::AdacPublicKey::from_adac(
+            crt.header().key_type,
+            crt.get_public_key(),
+        )
+        .map_err(|e| CommandError::AdacError {
+            source: anyhow::anyhow!("Error parsing public key: {:?}", e),
+        })?;
+        let pem = pem::Pem::new("PUBLIC KEY", p.get_spki());
+        let pem = pem::encode(&pem);
+
         let signature = base16ct::lower::encode_string(crt.get_signature());
+
+        let der_sig = match adac_crypto::utils::signature_as_der(header.key_type, crt.get_signature()) {
+            Ok(v) => {
+                Some(BASE64_STANDARD.encode(v.as_slice()))
+            }
+            Err(_) => None
+        };
+        let tbs = BASE64_STANDARD.encode(crt.get_tbs());
 
         certificates.push(DisplayCertificate {
             version,
@@ -174,8 +207,11 @@ pub fn display_command(
             permissions_mask_be,
             permissions_mask_raw,
             public_key,
+            pem,
             extensions,
             signature,
+            der_sig,
+            tbs,
         })
     }
 

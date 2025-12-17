@@ -219,7 +219,6 @@ pub fn convert_signature(key_type: KeyOptions, der_sig: &[u8]) -> Result<Vec<u8>
         EcdsaP256Sha256 => {
             let sig = p256::ecdsa::Signature::from_der(der_sig)
                 .map_err(|e| AdacError::Encoding(format!("Error decoding signature: {}", e)))?;
-
             sig.to_bytes().to_vec()
         }
         EcdsaP384Sha384 => {
@@ -231,6 +230,27 @@ pub fn convert_signature(key_type: KeyOptions, der_sig: &[u8]) -> Result<Vec<u8>
             let sig = p521::ecdsa::Signature::from_der(der_sig)
                 .map_err(|e| AdacError::Encoding(format!("Error decoding signature: {}", e)))?;
             sig.to_bytes().to_vec()
+        }
+        _ => return Err(AdacError::UnsupportedAlgorithm),
+    })
+}
+
+pub fn signature_as_der(key_type: KeyOptions, raw_sig: &[u8]) -> Result<Vec<u8>, AdacError> {
+    Ok(match key_type {
+        EcdsaP256Sha256 => {
+            let sig = p256::ecdsa::Signature::from_slice(raw_sig)
+                .map_err(|e| AdacError::Encoding(format!("Error decoding signature: {}", e)))?;
+            sig.to_der().as_bytes().to_vec()
+        }
+        EcdsaP384Sha384 => {
+            let sig = p384::ecdsa::Signature::from_slice(raw_sig)
+                .map_err(|e| AdacError::Encoding(format!("Error decoding signature: {}", e)))?;
+            sig.to_der().as_bytes().to_vec()
+        }
+        EcdsaP521Sha512 => {
+            let sig = p521::ecdsa::Signature::from_slice(raw_sig)
+                .map_err(|e| AdacError::Encoding(format!("Error decoding signature: {}", e)))?;
+            sig.to_der().as_bytes().to_vec()
         }
         _ => return Err(AdacError::UnsupportedAlgorithm),
     })
