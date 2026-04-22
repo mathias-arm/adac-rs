@@ -1,6 +1,15 @@
 name: Continuous Integration
 
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches:
+      - 'main'
+  pull_request:
+    branches:
+      - 'main'
+  workflow_dispatch:
+    branches:
+      - '**'
 
 jobs:
   ci:
@@ -19,13 +28,10 @@ jobs:
     strategy:
       matrix:
         target:
-          - x86_64-unknown-linux-gnu
           - aarch64-unknown-linux-gnu
         toolchain:
           - stable
         include:
-          - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
@@ -38,12 +44,8 @@ jobs:
           default: true
       - name: Install SoftHSM
         run: |
-          if [ "${{ matrix.target }}" = "aarch64-apple-darwin" ]; then
-            brew install softhsm2 openssl opensc softhsm2
-          else
-            sudo apt-get update -y -qq
-            sudo apt-get install -y -qq libsofthsm2 opensc
-          fi
+          sudo apt-get update -y -qq
+          sudo apt-get install -y -qq libsofthsm2 opensc
       - name: Install Rust target
         run: rustup target add ${{ matrix.target }}
       - name: Check
@@ -54,5 +56,5 @@ jobs:
           RUST_BACKTRACE: 1
         run: |
           sh adac-tests/run-tests.sh
-          cargo build --release
-          ADAC_CLI=./target/release/adac-cli sh adac-tests/pkcs11-test.sh        
+          cargo build -p adac-cli
+          ADAC_CLI=./target/debug/adac-cli sh adac-tests/pkcs11-test.sh        
